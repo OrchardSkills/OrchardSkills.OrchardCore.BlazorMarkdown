@@ -1,2 +1,2 @@
 # OrchardSkills.OrchardCore.BlazorMarkdown
-Orchard Core CMS Web Application with a Blazor App rendering a blog post markup
+Orchard Core CMS Web Application with a Blazor rendering a blog post markup
