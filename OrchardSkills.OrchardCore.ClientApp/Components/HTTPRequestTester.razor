@@ -1,0 +1,208 @@
+﻿@using Microsoft.AspNetCore.Components.WebAssembly.Http
+@using System.Text.Json
+@inject HttpClient Http
+@inject NavigationManager NavigationManager
+
+
+    <div class="row">
+        <div class="col-2">
+            <div>Method:</div>
+            <select class="form-control" id="request-method" @bind="method">
+                <option value="GET">GET</option>
+                <option value="POST" selected>POST</option>
+                <option value="PUT">PUT</option>
+                <option value="DELETE">DELETE</option>
+            </select>
+        </div>
+        <div class="col-10">
+            <div>URI:</div>
+            <input class="form-control" id="request-uri" @bind="uri" />
+        </div>
+    </div>
+
+    <br>
+    <br>
+    <div class="input-group">
+        <div class="input-group-prepend">
+            <span class="input-group-text">Body</span>
+        </div>
+        <textarea id="request-body" @bind="requestBody" class="form-control" aria-label="With textarea"></textarea>
+    </div>
+
+    <br>
+    <br>
+
+    <div class="pb-2">Request headers:</div>
+    @foreach (var header in requestHeaders)
+    {
+    <div class="header-entry pb-2">
+        <div class="row">
+            <div class="col-6 ">
+                <label> Key:</label>
+                <input class="form-control" @bind="header.Name" />
+            </div>
+            <div class="col-4">
+                <label> Value: </label>
+                <input class="form-control" @bind="header.Value" />
+            </div>
+            <div class="col-2 d-flex align-items-end">
+
+                <button class="btn btn-danger" @onclick="@(e => RemoveHeader(header))">remove</button>
+            </div>
+
+        </div>
+
+
+    </div>
+    }
+    <button class="btn btn-primary " id="add-header" @onclick="@AddHeader">Add</button>
+    <br>
+    <br>
+    <button class="btn btn-success" id="send-request" @onclick="@DoRequest">Send</button>
+
+
+
+
+
+    @if (responseStatusCode.HasValue)
+    {
+    <h2>Response</h2>
+    <p>
+    <div>Status:</div><span id="response-status">@responseStatusCode</span>
+    </p>
+    <div class="input-group">
+        <div class="input-group-prepend">
+            <span class="input-group-text">Body</span>
+        </div>
+        <textarea id="response-body" style="min-height: 400px;" readonly class="form-control"
+            aria-label="With textarea">@responseBody</textarea>
+    </div>
+    <br />
+    <br />
+
+    <div class="input-group">
+        <div class="input-group-prepend">
+            <span class="input-group-text">Headers</span>
+        </div>
+        <textarea style="min-height: 150px;" id="response-headers" readonly class="form-control"
+            aria-label="With textarea">@responseHeaders</textarea>
+    </div>
+
+    @((MarkupString)htmlMarkdown)
+
+    }
+
+
+
+
+
+@code {
+
+    private string uri = "https://localhost:5001/api/graphql";
+    private string method = "POST";
+    private string requestBody = @"{ blogPost { displayText subtitle author publishedUtc markdownBody { markdown } } }";
+    private List<RequestHeader> requestHeaders = new List<RequestHeader>()
+    {
+      new RequestHeader() { Name = "Content-Type", Value = "application/graphql" },
+    };
+    private System.Net.HttpStatusCode? responseStatusCode;
+    private string responseBody;
+    private string responseHeaders;
+    private string htmlMarkdown = "<p></p>";
+    private string markdown = "";
+
+    public class ApiGraphQL
+    {
+        public data data { get; set; }
+    }
+
+    public class data
+    {
+        public blogPost[] blogPost { get; set; }
+    }
+
+    public class blogPost
+    {
+        public string displayText { get; set; }
+
+        public string subtitle { get; set; }
+
+        public string author { get; set; }
+
+        public string publishedUtc { get; set; }
+
+        public markdownBody markdownBody { get; set; }
+    }
+
+    public class markdownBody
+    {
+        public string markdown { get; set; }
+    }
+
+    private async void DoRequest()
+    {
+        responseStatusCode = null;
+
+        try
+        {
+            var requestMessage = new HttpRequestMessage()
+            {
+                Method = new HttpMethod(method),
+                RequestUri = new Uri(uri),
+                Content = string.IsNullOrEmpty(requestBody) ? null : new StringContent(requestBody)
+            };
+
+            foreach (var header in requestHeaders)
+            {
+                // StringContent automatically adds its own Content-Type header with default value "text/plain"
+                // If the developer is trying to specify a content type explicitly, we need to replace the default value,
+                // rather than adding a second Content-Type header.
+                if (header.Name.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) && requestMessage.Content != null)
+                {
+                    requestMessage.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(header.Value);
+                    continue;
+                }
+
+                if (!requestMessage.Headers.TryAddWithoutValidation(header.Name, header.Value))
+                {
+                    requestMessage.Content?.Headers.TryAddWithoutValidation(header.Name, header.Value);
+                }
+            }
+
+            var response = await Http.SendAsync(requestMessage);
+            responseStatusCode = response.StatusCode;
+            responseBody = await response.Content.ReadAsStringAsync();
+            var allHeaders = response.Headers.Concat(response.Content?.Headers ?? Enumerable.Empty<KeyValuePair<string, IEnumerable<string>>>());
+            responseHeaders = string.Join(Environment.NewLine, allHeaders.Select(pair => $"{pair.Key}: {pair.Value.First()}").ToArray());
+            ApiGraphQL apiGraphQL = JsonSerializer.Deserialize<ApiGraphQL>(responseBody);
+            if (apiGraphQL.data.blogPost.Length > 0)
+            {
+                markdown = apiGraphQL.data.blogPost[0].markdownBody.markdown;
+                htmlMarkdown = "<p>" + Markdig.Markdown.ToHtml(markdown) + "</p>";
+            }
+        }
+        catch (Exception ex)
+        {
+            if (ex is AggregateException)
+            {
+                ex = ex.InnerException;
+            }
+            responseStatusCode = System.Net.HttpStatusCode.SeeOther;
+            responseBody = ex.Message + Environment.NewLine + ex.StackTrace;
+        }
+
+        StateHasChanged();
+    }
+
+    private void AddHeader()
+        => requestHeaders.Add(new RequestHeader());
+
+    private void RemoveHeader(RequestHeader header)
+        => requestHeaders.Remove(header);
+
+    private class RequestHeader
+    {
+        public string Name { get; set; }
+        public string Value { get; set; }
+    }
+}
